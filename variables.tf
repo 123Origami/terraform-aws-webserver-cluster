@@ -58,3 +58,11 @@ variable "aws_region" {
   type        = string
   default     = "eu-north-1"
 }
+
+# addition for version 2 tagging
+
+variable "custom_user_data" {
+  description = "Custom user data script for instances (optional)"
+  type        = string
+  default     = ""
+}

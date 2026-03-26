@@ -124,7 +124,7 @@ resource "aws_launch_template" "web" {
   instance_type          = var.instance_type
   vpc_security_group_ids = [aws_security_group.instance.id]
 
-  user_data = base64encode(<<-EOF
+  user_data = var.custom_user_data != "" ? var.custom_user_data : base64encode(<<-EOF
     #!/bin/bash
     yum update -y
     yum install -y httpd
@@ -137,41 +137,15 @@ resource "aws_launch_template" "web" {
     cat > /var/www/html/index.html << HTML
     <!DOCTYPE html>
     <html>
-    <head>
-        <title>${var.cluster_name}</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                text-align: center;
-                padding: 50px;
-                margin: 0;
-            }
-            .container {
-                background: rgba(0,0,0,0.3);
-                padding: 30px;
-                border-radius: 15px;
-                max-width: 800px;
-                margin: 0 auto;
-            }
-        </style>
-    </head>
+    <head><title>${var.cluster_name}</title></head>
     <body>
-        <div class="container">
-            <h1>🚀 ${var.cluster_name}</h1>
-            <h2>Environment: ${var.environment}</h2>
-            <p><strong>Instance ID:</strong> $INSTANCE_ID</p>
-            <p><strong>Availability Zone:</strong> $AZ</p>
-            <p><strong>Served at:</strong> $(date)</p>
-            <p>This request was load balanced!</p>
-        </div>
+        <h1>🚀 ${var.cluster_name}</h1>
+        <p>Instance: $INSTANCE_ID</p>
+        <p>AZ: $AZ</p>
+        <p>Environment: ${var.environment}</p>
     </body>
     </html>
     HTML
-    
-    chmod 644 /var/www/html/index.html
-    echo "User data completed for $INSTANCE_ID" >> /var/log/user-data.log
   EOF
   )
 
