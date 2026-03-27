@@ -52,7 +52,10 @@ resource "random_id" "suffix" {
   byte_length = 4
 }
 
-# Security Group for Load Balancer
+# ============================================
+# SECURITY GROUP FOR LOAD BALANCER
+# ============================================
+
 resource "aws_security_group" "alb" {
   name        = "${var.cluster_name}-alb-sg"
   description = "Security group for Application Load Balancer"
@@ -80,35 +83,14 @@ resource "aws_security_group" "alb" {
   }
 }
 
-# Security Group for EC2 instances
+# ============================================
+# SECURITY GROUP FOR EC2 INSTANCES
+# ============================================
+
 resource "aws_security_group" "instance" {
   name        = "${var.cluster_name}-instance-sg"
   description = "Security group for EC2 instances"
   vpc_id      = data.aws_vpc.default.id
-
-  # Only allow HTTP from the ALB security group (security group chaining)
-  ingress {
-    from_port       = var.server_port
-    to_port         = var.server_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-    description     = "HTTP from ALB only"
-  }
-
-  ingress {
-    from_port   = var.ssh_port
-    to_port     = var.ssh_port
-    protocol    = "tcp"
-    cidr_blocks = var.ssh_cidr_blocks
-    description = "SSH for debugging"
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 
   tags = {
     Name        = "${var.cluster_name}-instance-sg"
@@ -117,7 +99,51 @@ resource "aws_security_group" "instance" {
   }
 }
 
-# Launch Template - blueprint for instances
+# ============================================
+# SECURITY GROUP RULES (Refactored with loops)
+# ============================================
+
+# Rule 1: HTTP from ALB (always present)
+resource "aws_security_group_rule" "allow_http_from_alb" {
+  type                     = "ingress"
+  from_port                = var.server_port
+  to_port                  = var.server_port
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.instance.id
+  source_security_group_id = aws_security_group.alb.id
+  description              = "HTTP from ALB"
+}
+
+# Rule 2: SSH access (optional - can be disabled)
+resource "aws_security_group_rule" "allow_ssh" {
+  count = var.enable_ssh ? 1 : 0
+
+  type              = "ingress"
+  from_port         = var.ssh_port
+  to_port           = var.ssh_port
+  protocol          = "tcp"
+  cidr_blocks       = var.ssh_cidr_blocks
+  security_group_id = aws_security_group.instance.id
+  description       = "SSH access"
+}
+
+# Rule 3: Additional custom rules (for_each loop)
+resource "aws_security_group_rule" "additional" {
+  for_each = var.additional_sg_rules
+
+  type              = "ingress"
+  from_port         = each.value.from_port
+  to_port           = each.value.to_port
+  protocol          = each.value.protocol
+  cidr_blocks       = each.value.cidr_blocks
+  security_group_id = aws_security_group.instance.id
+  description       = each.value.description
+}
+
+# ============================================
+# LAUNCH TEMPLATE (with custom tags)
+# ============================================
+
 resource "aws_launch_template" "web" {
   name_prefix            = "${var.cluster_name}-lt-"
   image_id               = data.aws_ami.amazon_linux_2.id
@@ -151,11 +177,14 @@ resource "aws_launch_template" "web" {
 
   tag_specifications {
     resource_type = "instance"
-    tags = {
-      Name        = "${var.cluster_name}-instance"
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-    }
+    tags = merge(
+      {
+        Name        = "${var.cluster_name}-instance"
+        Environment = var.environment
+        ManagedBy   = "Terraform"
+      },
+      var.custom_instance_tags
+    )
   }
 
   lifecycle {
@@ -163,7 +192,10 @@ resource "aws_launch_template" "web" {
   }
 }
 
-# Application Load Balancer
+# ============================================
+# APPLICATION LOAD BALANCER
+# ============================================
+
 resource "aws_lb" "web" {
   name               = "${var.cluster_name}-alb"
   internal           = false
@@ -180,7 +212,10 @@ resource "aws_lb" "web" {
   }
 }
 
-# Target Group
+# ============================================
+# TARGET GROUP
+# ============================================
+
 resource "aws_lb_target_group" "web" {
   name     = "${var.cluster_name}-tg"
   port     = var.server_port
@@ -205,7 +240,10 @@ resource "aws_lb_target_group" "web" {
   }
 }
 
-# Listener
+# ============================================
+# LISTENER
+# ============================================
+
 resource "aws_lb_listener" "web" {
   load_balancer_arn = aws_lb.web.arn
   port              = var.server_port
@@ -217,7 +255,10 @@ resource "aws_lb_listener" "web" {
   }
 }
 
-# Auto Scaling Group
+# ============================================
+# AUTO SCALING GROUP
+# ============================================
+
 resource "aws_autoscaling_group" "web" {
   name                      = "${var.cluster_name}-asg"
   vpc_zone_identifier       = data.aws_subnets.default.ids
@@ -253,4 +294,28 @@ resource "aws_autoscaling_group" "web" {
   lifecycle {
     create_before_destroy = true
   }
+}
+
+# ============================================
+# AUTO SCALING POLICIES (Optional with count)
+# ============================================
+
+resource "aws_autoscaling_policy" "scale_out" {
+  count = var.enable_autoscaling ? 1 : 0
+
+  name                   = "${var.cluster_name}-scale-out"
+  scaling_adjustment     = 1
+  adjustment_type        = "ChangeInCapacity"
+  cooldown               = 300
+  autoscaling_group_name = aws_autoscaling_group.web.name
+}
+
+resource "aws_autoscaling_policy" "scale_in" {
+  count = var.enable_autoscaling ? 1 : 0
+
+  name                   = "${var.cluster_name}-scale-in"
+  scaling_adjustment     = -1
+  adjustment_type        = "ChangeInCapacity"
+  cooldown               = 300
+  autoscaling_group_name = aws_autoscaling_group.web.name
 }
